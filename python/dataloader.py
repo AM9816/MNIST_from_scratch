@@ -1,4 +1,4 @@
-from PIL import Image
+# from PIL import Image
 from glob import glob
 from random import shuffle
 from tqdm import tqdm
@@ -79,71 +79,3 @@ def load_or_download_MNIST(path=None, shuffle_=True, N=None, FORCED_SPLIT=None):
         }
 
 
-def load_or_download_MNIST_(path=None, shuffle_=True, N=None, FORCED_SPLIT=None):
-    pass;
-
-    data = {}
-
-    if N is not None and FORCED_SPLIT is None:
-        FORCED_SPLIT=.2
-    
-    exists = path is not None and os.path.isdir(path)
-
-    if exists:
-        print("MNIST folder exists locally")
-    else:
-        print("MNIST local folder not found, using kagglehub")
-        path = kagglehub.dataset_download("alexanderyyy/mnist-png")
-        path += "\\mnist_png\\"
-        print(f"dir = {path}")
-        # print(path); exit()
-
-    train_test = glob(path+"\\*")
-    train_test.reverse()
-
-    # print(train_test); exit()
-
-    i = 0
-    for folder in train_test:
-
-        key = str(folder[-5:]).replace("\\", "")
-        data[key] = []
-        class_folders = glob(folder+"\\*")
-        images = sum(
-            ([[x, int(x[-5])] for x in glob(class_folder+"\\*")]
-             for class_folder in class_folders), start=[])
-        if shuffle_: shuffle(images)
-        total = len(images) if N is None else min(N, len(images))
-
-        for img, class_name in tqdm(images, desc=key, total=total):
-            img_ = Image.open(img)
-            pixel_data = [x/255 for x in list(img_.getdata())]
-            data[key].append((pixel_data, class_name))
-            i+=1
-
-            if N is not None and i>=N: break
-
-        if shuffle_:
-            shuffle(data[key])
-
-
-    # force train test split
-    if (FORCED_SPLIT is not None) or (N is not None and N < 50_000):
-        #SPLIT = .2 #len(data["test"]) / len(data["train"]);
-        SPLIT = FORCED_SPLIT if FORCED_SPLIT is not None else .2
-        all_data = data["train"] + data["test"]
-        #if shuffle_: shuffle(data)
-        
-        #print(data)
-
-        cutoff = int(len(all_data) * SPLIT)
-
-        out = {
-            "test" : all_data[:cutoff],
-            "train": all_data[cutoff+1:]
-        }
-    else:
-        out = data
-    #out=data
-
-    return out
