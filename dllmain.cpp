@@ -48,7 +48,6 @@ nn::Activation activ_id_to_enum(int _id) {
 dll FCN* INIT_FCN(
     int* archData, int dSize,
     fpoint dropout = 0, int activId = 1,
-    fpoint initMu = 0, fpoint initSigma = .1,
     bool biasInitially0 = true) {
 
 

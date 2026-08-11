@@ -39,7 +39,7 @@ void uniformParamInit(Matrix& m, fpoint mu = 0, fpoint sigma = .1) {
 // https://www.geeksforgeeks.org/deep-learning/kaiming-initialization-in-deep-learning/
 void heParamInit(Matrix& m) {
 
-	std::mt19937 engine = rgen.engine;
+	std::mt19937& engine = rgen.engine;
 	auto distFunc = std::normal_distribution<fpoint>{ 
 		0, std::sqrtf(2.f / m.cols()) };
 
