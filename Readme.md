@@ -26,6 +26,14 @@ pip install numpy tqdm kagglehub
 
 MNIST dataset is downloaded automatically via 'kagglehub' on initial run and cached locally.
 
+## Compiling C++ into compatible DLL
+1. Download Eigen source code such that `#include "Eigen/Dense"` resolves, either past Eigen folder into source code folder or add install directory to **C/C++ → General → Additional Include Directories**.
+2. Set compilation configuration to **Release / x64**, Eigen heavily depends on optimizations, compiling with Debug increases running time by over an order of magnitude.
+3. Enable **C/C++ → Language → Open MP Support (`/openmp`)** to parallelize large matrix operations.
+4. Build, then pass the resulting DLL path to `C_FCN_Interface` in `c_init.py` in custom source file.
+
+
+
 ## Example Usage
 
 ```python
@@ -47,4 +55,4 @@ C.save_params("latest.params")
 `epochs=-1` trains indefinitely. Checkpoints are written at the end of each epoch.
 
 ## Misc Notes
-- `using fpoint = float` in `datadefinitions.h` must match 
+- `using fpoint = float` in `datadefinitions.h` must match `c_float` in `c_init.py`, this is correctly configured by default but experimenting with different representation depths requires both to change.
