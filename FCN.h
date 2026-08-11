@@ -4,69 +4,56 @@
 #include <vector>
 #include <mutex>
 #include "random.h"
-#define vectorList std::vector
 
-#define fpoint double
+template <typename T> using vectorList = nn::vectorList<T>;
+template <typename T> void print(const T& x) { 
+    std::cout << x << std::endl; }
 
-using Eigen::Matrix;
-using Eigen::Vector;
-using Eigen::Dynamic;
-//using Eigen::MatrixXd;
-#define Matrixd Matrix<fpoint, -1, -1> 
-
-
+// shortcuts
+using Matrix = nn::Matrix;
+using Vectorxd = nn::Vectorxd;
+using rVectorxd = nn::rVectorxd;
 
 
 struct FCN_Layer {
-    FCN_Layer(int, int, float, int);
+    FCN_Layer(int, int, float, nn::Activation);
     int inSize, outSize;
     float dropOut;
-    int activation;
-
+    nn::Activation activation;
 };
 
 
 
 struct FCN {
 
-    FCN(vectorList<int>&, fpoint, vectorList<int>&,
-        fpoint, fpoint, bool);
-    ~FCN();
+    FCN(
+        vectorList<int>&, 
+        fpoint, 
+        vectorList<nn::Activation>&,
+        bool);
+    //~FCN();
 
+    // core
+    Matrix forward(Matrix&);
+    vectorList<vectorList<Matrix>> backward(Matrix&, Matrix&, bool);
+    void train(int, fpoint, fpoint, fpoint, fpoint*, int, int, bool);
+    vectorList<FCN_Layer> arch; // architecture
+    std::mutex paramConcurrentLock;
 
-    void display();
-    void load_data(int*, int, bool, bool);
+    // data 
+    nn::DataSet<Matrix> trainData;
+    nn::DataSet<Matrix> testData;
     void display_dataset(bool);
-    Matrixd forward(Matrixd&);
-    vectorList<vectorList<Matrixd>> backward(Matrixd&, Matrixd&);
-    void train(int, fpoint, fpoint, fpoint, fpoint*, int, int);
-    vectorList<fpoint> test_against_unseen(int);
-    void clear_grad();
     void shuffle_dataset(int);
-
+    vectorList<fpoint> test_against_unseen(int);
+    int datapointLength = -1;
+    
+    // params
+    void display_architecture();
     void serialize(fpoint*);
     void load_params(fpoint*);
-
-    DataSet<Matrixd> trainData;
-    DataSet<Matrixd> testData;
-
-    int datapointLength = -1;
-    bool pause_parameter_edit = false;
-
-    std::mutex paramMutex;
-
-    vectorList<FCN_Layer> arch;
-
-    vectorList<
-        Matrix<fpoint, Dynamic, Dynamic>
-    >   weights;
-
-    vectorList<
-        Matrix<fpoint, Dynamic, Dynamic>
-    >   bias;
-
-    // required for interacting with python
-    FCN* self = nullptr;
+    vectorList<Matrix> weights;
+    vectorList<Matrix> bias;
 
 
 };

@@ -1,31 +1,15 @@
 #include "pch.h"
-#include <iostream>
-#include <random>
-#include <mutex>
 #include "FCN.h"
 
-#define print(x) std::cout << x << std::endl;
-#define RSEED 0
-#define EPSILON pow(10, -8)
-#define LEAKY_RELU_GRAD .01
 
 #ifdef max
 #undef max
 #endif
 
-RandomGen rgen = RandomGen(RSEED);
-
-fpoint ReLU(fpoint);
-fpoint d_ReLU(fpoint);
-fpoint ReLU_leaky(fpoint inp);
-fpoint d_ReLU_leaky(fpoint inp);
-
-static inline fpoint _ACTIV(fpoint x) { return ReLU_leaky(x); }
-static inline fpoint _D_ACTIV(fpoint x) { return d_ReLU_leaky(x); }
+RandomGen<fpoint> rgen(nn::rSeed);
 
 
-
-void printShape(Matrixd const& m) {
+void printShape(Matrix const& m) {
 	std::cout 
 		<< "(" << m.rows()
 		<< ", " << m.cols() 
@@ -41,8 +25,8 @@ void printVector(vectorList<T>& l) {
 }
 
 
-
-void randomise_matrix_inplace(Matrixd& m, fpoint mu = 0, fpoint sigma = .1) {
+// basic uniform distribution initialization
+void uniformParamInit(Matrix& m, fpoint mu = 0, fpoint sigma = .1) {
 	for (int y = 0; y < m.rows(); y++) {
 		for (int x = 0; x < m.cols(); x++) {
 			m(y, x) = mu + sigma * (rgen.get() * 2.f - 1.f);
@@ -51,25 +35,27 @@ void randomise_matrix_inplace(Matrixd& m, fpoint mu = 0, fpoint sigma = .1) {
 }
 
 
+// Kaiming parameter initialization
+// https://www.geeksforgeeks.org/deep-learning/kaiming-initialization-in-deep-learning/
+void heParamInit(Matrix& m) {
 
-void he_param_init(Matrixd& m) {
-	fpoint stdDev = std::sqrtf(2.f / m.cols());
-	std::random_device rd{};
-	std::mt19937 gen{ rd() };
-	auto dist = std::normal_distribution<fpoint>{ 0, stdDev };
+	std::mt19937 engine = rgen.engine;
+	auto distFunc = std::normal_distribution<fpoint>{ 
+		0, std::sqrtf(2.f / m.cols()) };
 
 	for (int y = 0; y < m.rows(); y++) {
 		for (int x = 0; x < m.cols(); x++) {
-			m(y, x) = dist(gen);
+			m(y, x) = distFunc(engine);
 		}
 	}
 }
 
 
-
-FCN_Layer::FCN_Layer(int inSize, int outSize, float dropOut, int activ) 
+FCN_Layer::FCN_Layer(int inSize, int outSize, 
+					 float dropOut, nn::Activation activ) 
 	: inSize(inSize), outSize(outSize), dropOut(dropOut), activation(activ)
 { }
+
 
 
 void FCN::display_dataset(bool print_actual_data=false) {
@@ -85,8 +71,8 @@ void FCN::display_dataset(bool print_actual_data=false) {
 				this->trainData : this->testData;
 
 
-			if (j == 0) { print("TRAIN SET") }
-			else { print("TEST SET") };
+			if (j == 0) { print("TRAIN SET"); }
+			else { print("TEST SET"); };
 			for (int i = 0; i < dataset.Xs.size(); i++) {
 				auto& x = dataset.Xs[i];
 				auto& y = dataset.Ys[i];
@@ -122,15 +108,14 @@ void FCN::display_dataset(bool print_actual_data=false) {
 
 
 
-FCN::~FCN() {
-	this->self = nullptr;
-}
+//FCN::~FCN() {
+//	this->self = nullptr;
+//}
 
 
 
 FCN::FCN(vectorList<int>& layerSizes, fpoint dropout,
-		 vectorList<int>& activs,
-		 fpoint init_mu=0, fpoint init_sigma=.1,
+		 vectorList<nn::Activation>& activs,
 		 bool bias_init_0=true) {
 	
 	this->weights.clear(); this->bias.clear();
@@ -140,34 +125,28 @@ FCN::FCN(vectorList<int>& layerSizes, fpoint dropout,
 	this->weights.resize(size - 1);
 	this->bias.resize(size - 1);
 
-	bool doRandInit = init_mu != 0 or init_sigma != 0;
-
-	if (doRandInit) print("parameter random assignment");
-
 	for (int i = 1; i < size; i++) {
 		int size = layerSizes[i - 1];
 		int nextSize = layerSizes[i];
 
-		Matrixd& weight = this->weights[i - 1];
+		Matrix& weight = this->weights[i - 1];
 		weight.resize(
 			nextSize, size);
-		//weight.fill(initVal);
+
 		weight.fill(0);
-		if (doRandInit) {
-			he_param_init(weight);
-			//randomise_matrix_inplace(weight, init_mu, init_sigma);
-		}
+		heParamInit(weight);
+
 			
 
 
-		Matrixd& bias = this->bias[i - 1];
+		Matrix& bias = this->bias[i - 1];
 		bias.resize(
 			nextSize, 1);
 		bias.fill(0);
-		if (doRandInit and (not bias_init_0)) {
-			he_param_init(bias);
-			//randomise_matrix_inplace(bias, init_mu, init_sigma);
+		if (not bias_init_0) {
+			heParamInit(bias);
 		}
+		
 
 
 		this->arch.push_back(FCN_Layer(
@@ -178,16 +157,12 @@ FCN::FCN(vectorList<int>& layerSizes, fpoint dropout,
 		<< this->weights[0].cwiseAbs().mean()
 		<< std::endl;
 
-	//print("WEIGHTS");
-	//printVector(this->weights);
-	//print("BIAS");
-	//printVector(this->bias);
 
 }
 
 
 
-void FCN::display() {
+void FCN::display_architecture() {
 	std::cout << "FCN with " << this->arch.size() << " layers" << std::endl;
 	int i = 1;
 	for (FCN_Layer const &layer : this->arch) {
@@ -203,7 +178,7 @@ void FCN::display() {
 }
 
 
-void softMaxMatrix_colwise_inplace(Matrixd& x) {
+void softmax_colwise(Matrix& x) {
 	// subtract max for stability, then exp all
 	rVectorxd max_s = x.colwise().maxCoeff();
 	// cast back into matrix, eigen likes to default to vector
@@ -213,12 +188,37 @@ void softMaxMatrix_colwise_inplace(Matrixd& x) {
 	x = x.array().rowwise() / sum.array();
 }
 
+// efficient eigen implementations of relu and leaky relu .. 
+Matrix eval_activation(Matrix& x, nn::Activation activ) {
+	
+	switch (activ) {
+	case nn::Activation::RELU:
+		return x.cwiseMax(0.0);
+	case nn::Activation::LEAKY_RELU:
+		return x.array().max(x.array() * nn::LEAKY_RELU_GRAD);
+	case nn::Activation::IDENTITY:
+		return x;
+	}
+}
+// .. and their derivatives
+Matrix eval_activation_derivative(Matrix& x, nn::Activation activ) {
+	switch (activ) {
+	case nn::Activation::RELU:
+		return (x.array() > 0.0).cast<fpoint>();
+	case nn::Activation::LEAKY_RELU:
+		return (x.array() > 0.0).select(
+			Matrix::Constant(x.rows(), x.cols(), 1.f),
+			Matrix::Constant(x.rows(), x.cols(), nn::LEAKY_RELU_GRAD));
+	case nn::Activation::IDENTITY:
+		return Matrix::Ones(x.rows(), x.cols());
+	}
+}
 
-
-Matrixd FCN::forward(Matrixd& Xs) {
+// regular forward pass without gradient tracking
+Matrix FCN::forward(Matrix& Xs) {
 
 	{
-		std::lock_guard<std::mutex> lock(this->paramMutex);
+		std::lock_guard<std::mutex> lock(this->paramConcurrentLock);
 	
 		if (Xs.rows() != this->arch[0].inSize) {
 
@@ -226,52 +226,62 @@ Matrixd FCN::forward(Matrixd& Xs) {
 				<< "bad input size " << Xs.rows()
 				<< " expected " << this->arch[0].inSize
 				<< std::endl;
-			exit(-1);
+			//exit(-1);
 			//throw std::invalid_argument("BAD INPUT SIZE");
+			return Matrix();
 		}
 
-		Matrixd x = Xs;
+		Matrix x = Xs;
 		int bsize = x.cols();
 
 		for (int i = 0; i < this->arch.size(); i++) {
 
+			bool isLastIter = i == this->arch.size() - 1;
+
 			auto const& W = this->weights[i];
-			Matrixd B = this->bias[i].replicate(1, bsize); // copy
-			bool is_last_iteration = i == this->arch.size() - 1;
+			Matrix B = this->bias[i].replicate(1, bsize); 
 
 			x = W * x + B;
 
 			// last activation is softmax, 
-			if (not is_last_iteration) {
-				x = x.unaryExpr(&_ACTIV);
+			if (not isLastIter) {
+				//x = x.unaryExpr(&_ACTIV);
+				//x = x.unaryExpr(_activ);
+				x = eval_activation(x, this->arch[i].activation);
 			}
+			// softmax final for classification
 			else {
-				softMaxMatrix_colwise_inplace(x);
+				softmax_colwise(x);
 			}
-
 		}
 
 
 		return x;
-
-
-
-
-
-
-
-
 	}
+}
 
-	
+
+// mse
+// training is done with cross entropy loss, this is just 
+// for sanity checks 
+fpoint loss_mse(Matrix& a, Matrix& b) {
+	return (a - b).squaredNorm() / (a.size() + nn::EPSILON);
+}
+
+
+// cross entropy loss
+fpoint loss_ce(Matrix& logits,
+	//const std::vector<int>& labels) {
+	Matrix& Y) {
+
+	fpoint total_loss = -(Y.array() * logits.array().max(nn::EPSILON).log()).sum();
+	return total_loss / (fpoint)logits.cols();
+
 
 }
 
 
-
-void d_softmax_inplace(Matrixd& X) {
-	//Matrixd out;
-	//out.resizeLike(X);
+void softmax_derivative(Matrix& X) {
 
 	for (int i = 0; i < X.cols(); i++) {
 		//fpoint sigma = X.col(i).array().exp().sum();
@@ -288,60 +298,37 @@ void d_softmax_inplace(Matrixd& X) {
 }
 
 
-void do_dropOut_inPlace(Matrixd& X, fpoint p) {
 
-	if (p == 0) { return; }
-
-	//Matrixd const zeros = Matrixd::Zero(X.rows(), X.cols());
-	Matrixd const ones = Matrixd::Ones(X.rows(), X.cols());
-	Matrixd const zeros = 0.0 * ones;
-	
-
-	// -1 -> 1
-	Matrixd mask = Matrixd::Random(X.rows(), X.cols());
-	// 0 -> 1
-	mask = (mask + ones) / 2.0;
-
-	// has to be one line, as (mask > p) casts outside of Matrixd
-	// without letting you cast back without static assertions
-	// do not overwrite X straight away!!!
-	//Matrixd& temp = zeros;
-	Matrixd out = (mask.array() > p).select(X, zeros);
-	
-	// scale by 1-p to keep magnitudes consistent irrespective of p
-	X = out / (1.f - p);
-}
-
-
-// TODO rewrite to use singular forward function with option to record As, Zs
 // get (avg) gradient of loss w.r.t each weight, bias
-vectorList<vectorList<Matrixd>>
-FCN::backward(Matrixd& Xs, Matrixd& Ys) {
+// also return loss to avoid recomputation later in training
+vectorList<vectorList<Matrix>>
+FCN::backward(Matrix& Xs, Matrix& Ys,
+			  bool returnLoss = false) {
 
-	std::lock_guard<std::mutex> lock(this->paramMutex);
+	std::lock_guard<std::mutex> lock(this->paramConcurrentLock);
 
-	// values at each layer before activation
-	vectorList<Matrixd> Zs;
+	// values at each layer before activation ..
+	vectorList<Matrix> Zs;
 	// .. and after
-	vectorList<Matrixd> As;
+	vectorList<Matrix> As;
 
 	// store which values are zeroed 
 	// empty = no dropout applied
-	vectorList<Matrixd> dropoutMasks;
+	vectorList<Matrix> dropoutMasks;
 
 	// derivatives of loss w.r.t. weights and biases
-	vectorList<Matrixd> DlDw;
-	vectorList<Matrixd> DlDb;
+	vectorList<Matrix> DlDw;
+	vectorList<Matrix> DlDb;
 
 
-	Matrixd X = Xs; // current layer value
+	Matrix X = Xs; // current layer value
 	const int bsize = X.cols();
 
 	Zs.push_back(X);
 	As.push_back(X);
 	// no dropout yet, append empty matrix
 	// required to keep this array the correct length
-	dropoutMasks.push_back(Matrixd());
+	dropoutMasks.push_back(Matrix());
 
 	// go forward recording As, Zs and dropout masks
 	for (int i = 0; i < (int)this->arch.size(); i++) {
@@ -350,7 +337,7 @@ FCN::backward(Matrixd& Xs, Matrixd& Ys) {
 		const bool is_last_iter = i == this->arch.size() - 1;
 
 		// copy and repeat
-		Matrixd B = this->bias[i].replicate(1, bsize);
+		Matrix B = this->bias[i].replicate(1, bsize);
 
 		X = W * X + B;
 
@@ -358,19 +345,21 @@ FCN::backward(Matrixd& Xs, Matrixd& Ys) {
 
 		// apply activation
 		if (not is_last_iter) {
-			X = X.unaryExpr(&_ACTIV);}
+			//X = X.unaryExpr(&_ACTIV);}
+			X = eval_activation(X, this->arch[i].activation);
+		}
 		else {
-			softMaxMatrix_colwise_inplace(X);}
+			softmax_colwise(X);}
 
 		// store dropout and scale by 1/(1-p) to keep
 		// magnitudes consistent 
-		Matrixd dropout;
+		Matrix dropout;
 		const fpoint p = this->arch[i].dropOut;
 		if ((not is_last_iter) and p > 0.f) {
 			// cannot do dropout in place as mask is required
 
 			// -1 -> 1
-			Matrixd rand = Matrixd::Random(X.rows(), X.cols());
+			Matrix rand = Matrix::Random(X.rows(), X.cols());
 			rand = (rand.array() + 1.f) / 2.f; // 0 -> 1
 			dropout = ((rand.array() > p)).cast<fpoint>();
 
@@ -391,33 +380,36 @@ FCN::backward(Matrixd& Xs, Matrixd& Ys) {
 
 	// correction required at each layer
 	// dloss / dZ = A - y (with cross entropy loss)
-	Matrixd error = As.back() - Ys;
+	Matrix error = As.back() - Ys;
+
+	//Matrix finalOut = As.back();
 
 	// go backwards, using stored values to backprop gradients
 	for (int i = (int)this->arch.size(); i > 0; i--) {
 		
-		Matrixd& A_prev = As.at(i - 1);
+		Matrix& A_prev = As.at(i - 1);
 		
 		// standard gradient propagation
-		Matrixd Dloss_Dbias  = error.rowwise().sum() / (fpoint)bsize;
-		Matrixd Dloss_Dweight = error * A_prev.transpose() / (fpoint)bsize;
+		Matrix Dloss_Dbias  = error.rowwise().sum() / (fpoint)bsize;
+		Matrix Dloss_Dweight = error * A_prev.transpose() / (fpoint)bsize;
 		DlDb.push_back(Dloss_Dbias);
 		DlDw.push_back(Dloss_Dweight);
 
 		// final iteration is first layer, which has no previous activation
 		if (i > 1) {
-			Matrixd& W = this->weights[i - 1];
-			Matrixd& Z_prev = Zs.at(i - 1);	
+			Matrix& W = this->weights[i - 1];
+			Matrix& Z_prev = Zs.at(i - 1);	
 		
 			// Dloss / DA
-			Matrixd grad = W.transpose() * error;
+			Matrix grad = W.transpose() * error;
 		
-			Matrixd& dropout = dropoutMasks.at(i - 1);
+			Matrix& dropout = dropoutMasks.at(i - 1);
 
 			// if no dropout, empty matrix
 			if (dropout.size() != 0) grad = grad.cwiseProduct(dropout);
 
-			Matrixd d_activ_z = Z_prev.unaryExpr(&_D_ACTIV);
+			//Matrix d_activ_z = Z_prev.unaryExpr(_d_activ);
+			Matrix d_activ_z = eval_activation_derivative(Z_prev, arch[i - 2].activation);
 			error = grad.cwiseProduct(d_activ_z);
 
 		}
@@ -425,31 +417,25 @@ FCN::backward(Matrixd& Xs, Matrixd& Ys) {
 	}
 
 
-
 	// backprop records gradients backwards, so reverse
 	std::reverse(DlDw.begin(), DlDw.end());
 	std::reverse(DlDb.begin(), DlDb.end());
 
-	return { DlDw, DlDb };
+	if (returnLoss) {
+		fpoint loss = loss_ce(As.back(), Ys);
+		return { DlDw, DlDb, { Matrix::Constant(1, 1, loss)} };
+	}
+	else {
+		return { DlDw, DlDb };
+	}
+
 };
 
 
 
 
-Matrixd colwiseArgmax(Matrixd& x) {
-	Matrixd out;
-	out.resize(1, x.cols());
-	out.fill(-1);
-	for (int i = 0; i < x.cols(); i++) {
-		Eigen::Index max_;
-		x.col(i).maxCoeff(&max_);
-		
-	}
-	return out;
-}
 
-
-fpoint getAccuracy(Matrixd& A, Matrixd& B) {
+fpoint get_accuracy(Matrix& A, Matrix& B) {
 
 	int correct = 0;
 	int total = 0;
@@ -457,7 +443,7 @@ fpoint getAccuracy(Matrixd& A, Matrixd& B) {
 
 	for (int i = 0; i < A.cols(); i++) {
 
-		// undo ohe
+		// undo one hot encoding
 		A.col(i).maxCoeff(&Ai);
 		B.col(i).maxCoeff(&Bi);
 
@@ -471,62 +457,48 @@ fpoint getAccuracy(Matrixd& A, Matrixd& B) {
 
 }
 
-// mse
-fpoint _loss_mse(Matrixd& a, Matrixd& b) {
-	return (a - b).squaredNorm() / (a.size() + EPSILON);
-}
 
 
-fpoint _loss_ce(Matrixd& logits, 
-						  //const std::vector<int>& labels) {
-						  Matrixd& Y) {
-
-	double total_loss = -(Y.array() * logits.array().max(EPSILON).log()).sum();
-	return total_loss / (fpoint)logits.cols();
 
 
-}
-
-
+// holdout verification function, 
+// N = -1 iterates over entire test set
 vectorList<fpoint> FCN::test_against_unseen(int N = -1) {
 
-	
 
-	//return { 1, 2 };
 	fpoint acc = 0, sumLoss = 0;
-	int total_datapoints_tested = 0;
-	int total_batches_tested = 0;
+	int datapointsTested = 0;
+	int batchesTested = 0;
 	//auto& dataset = this->trainData;
 	auto& dataset = this->testData;
 
 	for (int i = 0; i < dataset.Xs.size(); i++) {
-		Matrixd& X = dataset.Xs[i];
-		Matrixd& Y = dataset.Ys[i];
-		Matrixd out = this->forward(X);
 
+		Matrix& X = dataset.Xs[i];
+		Matrix& Y = dataset.Ys[i];
+		Matrix out = this->forward(X);
+
+		acc += get_accuracy(out, Y);
+		batchesTested++;
+		datapointsTested += X.cols();
 		
-		total_batches_tested++;
-		total_datapoints_tested += X.cols();
-		
-	
-		acc += getAccuracy(out, Y);
-		//sumLoss += _loss_mse(out, Y);
-		sumLoss += _loss_ce(out, Y);
+		//sumLoss += loss_mse(out, Y);
+		sumLoss += loss_ce(out, Y);
 
-
-		if (N != -1 and total_datapoints_tested > N) break;
+		if (N != -1 and datapointsTested > N) break;
 	}
 
-	const fpoint n = N==-1 ? total_batches_tested : N;
+	const fpoint n = batchesTested;
 	return { acc / n,  sumLoss / n };
 }
 
+// basic shuffle
 // TODO replace with more efficient Fisher–Yates shuffle
 void FCN::shuffle_dataset(int n = -1) {
 
 	auto& dataset = this->trainData;
 
-	int N = dataset.Xs.size() - 1;
+	int N = dataset.Xs.size();
 
 	// half dataset size by default
 	if (n == -1) {
@@ -540,8 +512,8 @@ void FCN::shuffle_dataset(int n = -1) {
 		int i_ = (rgen.get() * N);
 		int j_ = (rgen.get() * N);
 
-		Matrixd X = dataset.Xs[i_];
-		Matrixd Y = dataset.Ys[i_];
+		Matrix X = dataset.Xs[i_];
+		Matrix Y = dataset.Ys[i_];
 	
 		dataset.Xs[i_] = dataset.Xs[j_];
 		dataset.Ys[i_] = dataset.Ys[j_];
@@ -557,42 +529,47 @@ void FCN::shuffle_dataset(int n = -1) {
 
 // class to optimize array of params given gradient estimates
 struct Optim {
-	fpoint lr, momentum, weight_decay;
-	vectorList<vectorList<Matrixd>> vels;
+
+	fpoint lr, momentum, weightDecay;
+	vectorList<vectorList<Matrix>> vels;
 	//bool has_initial_vels;s;
 		
-	Optim(fpoint lr, fpoint momentum, fpoint weight_decay,
-		  vectorList<vectorList<Matrixd>> const& sizes) {
+	Optim(fpoint lr, fpoint momentum, fpoint weightDecay,
+		  //vectorList<vectorList<Matrix>> const& sizes) {
+		  // list of pointers to avoid copies
+		  vectorList<const vectorList<Matrix>*> params) {
+		
 		this->lr = lr;
 		this->momentum = momentum;
-		this->weight_decay = weight_decay;
+		this->weightDecay = weightDecay;
 		//this->has_initial_vels = false;
-		this->register_vels(sizes);
+		this->register_vels(params);
 
-		fpoint effective_lr = lr / (1 - momentum);
+		fpoint stepSize = lr / (1 - momentum);
 
 		// sanity check
 		if (momentum != 0) {
 			std::cout << std::endl
 				<< "optimizer using lr = " << lr << ", momentum = "
-				<< momentum << ", effective avg step size = "
-				<< effective_lr << " ~ 10^" << log10f(effective_lr)
+				<< momentum << ", effective step size = "
+				<< stepSize << " ~ 10^" << log10f(stepSize)
 				<< std::endl;
 		}
 		
 
 	}
 
+	// add zero matrices of the correct shape to 
+	// internal velocity vectors
+	void register_vels(vectorList<const vectorList<Matrix>*> params) {
 
-	void register_vels(vectorList<vectorList<Matrixd>> const& sizes) {
-
-		vels.resize(sizes.size());
+		vels.resize(params.size());
 
 		int i = 0;
-		for (auto& size : sizes) {
-			for (Matrixd const& m : size) {
+		for (auto& p : params) {
+			for (Matrix const& m : *p) {
 				this->vels[i].push_back(
-					Matrixd::Zero(m.rows(), m.cols()));
+					Matrix::Zero(m.rows(), m.cols()));
 			}
 			i++;
 		
@@ -601,15 +578,16 @@ struct Optim {
 	}
 
 
-
-	void optimize(int n,
-				  vectorList<Matrixd>* parameters, 
-				  vectorList<Matrixd>* grads) {
+	// 
+	void optimize(int velocityIndex,
+				  vectorList<Matrix>* parameters, 
+				  vectorList<Matrix>* grads) {
 
 
 		if (grads->size() != parameters->size()) {
 			print("BAD OPTIMIZER INPUT");
-			exit(-1);
+			return;
+			//exit(-1);
 		}
 
 		//print("INSIDE");
@@ -619,26 +597,27 @@ struct Optim {
 
 		//return;
 
+		auto& velocityArray = this->vels[velocityIndex];
 
 		for (int i = 0; i < grads->size(); i++) {
-			Matrixd& parameter = parameters->at(i);
-			Matrixd& grad = grads->at(i);
+			Matrix& parameter = parameters->at(i);
+			Matrix& grad = grads->at(i);
 			if (momentum == 0)
 				parameter += grad * -this->lr;
 			else {
 				// update velocity
-				Matrixd vel_ = 
-					this->vels[n][i] * this->momentum + grad * -this->lr;
-				this->vels[n][i] = vel_;
+				Matrix vel = 
+					velocityArray[i] * this->momentum + grad * -this->lr;
+				velocityArray[i] = vel;
 				// optimize
-				parameter += vel_;
+				parameter += vel;
 
 
 			}
 
-			// weight decay
-			if (this->weight_decay != 0) {
-				parameter *= (1 - this->lr * weight_decay);
+			// weight decay (analytic)
+			if (this->weightDecay != 0) {
+				parameter *= (1 - this->lr * weightDecay);
 			}
 
 				
@@ -655,9 +634,10 @@ void FCN::load_params(fpoint* in) {
 
 	{
 
-		std::lock_guard<std::mutex> lock(this->paramMutex);
+		std::lock_guard<std::mutex> lock(this->paramConcurrentLock);
 
 
+		
 		fpoint* dataptr = in;
 		//int i = 0;
 		for (auto& weight : this->weights) {
@@ -682,7 +662,7 @@ void FCN::load_params(fpoint* in) {
 // reduce parameters down to 1D list to pass off to python
 void FCN::serialize(fpoint* out) {
 	{
-		std::lock_guard<std::mutex> lock(this->paramMutex);
+		std::lock_guard<std::mutex> lock(this->paramConcurrentLock);
 
 		fpoint* dataptr = out;
 		//int i = 0;
@@ -704,17 +684,18 @@ void FCN::serialize(fpoint* out) {
 
 
 
-
+// epochs = -1 trains forever
 void FCN::train(int epochs, fpoint lr, fpoint momentum=0,
-				fpoint weight_decay = 0,
+				fpoint weightDecay = 0,
 				fpoint* data = nullptr, int dataN=0,
-				int threads = 8) {
+				int threads = 8, bool printStatsPerEpoch=true) {
 
 
-
+	// allow large matrix operations to be parallelized
+	// requires openmp
 	Eigen::setNbThreads(threads);
 
-	bool send_back_data = data != nullptr and dataN != 0;
+	bool relayDataToPython = data != nullptr and dataN != 0;
 	bool loopForever = epochs == -1;
 	if (loopForever) epochs = 1;
 
@@ -722,13 +703,13 @@ void FCN::train(int epochs, fpoint lr, fpoint momentum=0,
 	
 
 
-	Optim optim(lr, momentum, weight_decay, {
-		this->weights, this->bias	
+	Optim optim(lr, momentum, weightDecay, {
+		&this->weights, &this->bias	
 	});
 
 	fpoint SumTrainLoss = 0;
 
-	if (send_back_data) {
+	if (relayDataToPython) {
 		data[0] = 0;
 	}
 
@@ -737,12 +718,11 @@ void FCN::train(int epochs, fpoint lr, fpoint momentum=0,
 
 		// validate
 		auto results = this->test_against_unseen();
-		fpoint n = this->trainData.Xs.size();
 		fpoint acc = results[0];
 		fpoint valLoss = results[1];
-		fpoint trainLoss = SumTrainLoss / n;
+		fpoint trainLoss = SumTrainLoss / this->trainData.Xs.size();
 
-		if (send_back_data) {
+		if (relayDataToPython) {
 			data[1] = 0;
 			data[2] = 0;
 			data[3] = trainLoss;
@@ -750,13 +730,14 @@ void FCN::train(int epochs, fpoint lr, fpoint momentum=0,
 			data[5] = acc;
 		}
 
-		//std::cout
-		//	<< "epoch " << epoch << " done\n"
-		//	<< "train loss avg = " << trainLoss << "\n"
-		//	<< "test loss avg = " << valLoss << "\n"
-		//	<< "accuracy = " << acc << std::endl;
-		//
-		//print(this->weights[0].cwiseAbs().colwise().mean().mean());
+		if (printStatsPerEpoch) {
+			std::cout << std::endl // extra endl to get past tqdm bar 
+				<< "epoch " << epoch << " starting\n"
+				<< "train loss avg = " << trainLoss << "\n"
+				<< "test loss avg = " << valLoss << "\n"
+				<< "accuracy = " << acc << std::endl;
+		}
+
 
 
 		SumTrainLoss = 0;
@@ -767,36 +748,36 @@ void FCN::train(int epochs, fpoint lr, fpoint momentum=0,
 		// optimize parameters
 		for (int i_data = 0; i_data < this->trainData.Xs.size(); i_data++) {
 
-			
-			//if (i_data != 0) printf("\b \b \b \b");
-			//printf("%d/%d", i_data, (int)this->trainData.Xs.size());
-
 			auto& X = this->trainData.Xs[i_data];
 			auto& Y = this->trainData.Ys[i_data];
 
 
 			//continue;
 
-			auto grads = this->backward(X, Y);
+			auto grads = this->backward(X, Y, true);
 			auto& D_weight = grads[0];
 			auto& D_bias = grads[1];
+			fpoint trainLoss = grads[2][0](0, 0);
+
 
 
 			//continue;
 			{
-				std::lock_guard<std::mutex> lk(this->paramMutex);
+				std::lock_guard<std::mutex> lk(this->paramConcurrentLock);
 
 				optim.optimize(0, &this->weights, &D_weight);
 				optim.optimize(1, &this->bias, &D_bias);
 
 			}
 			
-			Matrixd out = this->forward(X);
-			SumTrainLoss += _loss_ce(out, Y);
+			//Matrix out = this->forward(X);
+			//SumTrainLoss += loss_ce(out, Y);
+			SumTrainLoss += trainLoss;
 
-			if (send_back_data){
+			if (relayDataToPython){
 				data[1] = (fpoint)i_data / this->trainData.Xs.size();
 				data[2] = epoch;
+				data[3] = SumTrainLoss / (1.f + i_data);
 			}
 		}
 
@@ -806,7 +787,7 @@ void FCN::train(int epochs, fpoint lr, fpoint momentum=0,
 	}
 
 	// python tests for these values to tell when epochs finish
-	if (send_back_data) {
+	if (relayDataToPython) {
 		data[0] = 1;
 		data[1] = 1;
 	}

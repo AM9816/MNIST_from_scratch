@@ -1,13 +1,13 @@
 #include "pch.h"
 #include "FCN.h"
-//#include <stdio.h>
-#include <iostream>
-#include <vector>
 #include "datadefinitions.h"
 #include "random.h"
-#include <thread>
-#include <iomanip>
 
+
+// to expose python endpoint
+// all exposed functions are in UPPERCASE
+#define dll extern "C" __declspec(dllexport)
+    
 
 BOOL APIENTRY DllMain(HMODULE hModule,
     DWORD  ul_reason_for_call,
@@ -25,322 +25,226 @@ BOOL APIENTRY DllMain(HMODULE hModule,
     return TRUE;
 }
 
-#define dll extern "C" __declspec(dllexport)
-#define print(x) std::cout << x << std::endl;
-//#define forcount(x) for (int i = 0; i < x; i++)
-#define str(x) std::to_string(x)
-#define rSeed 2
 
-fpoint ReLU(fpoint inp) {
-    return inp > 0
-        ? inp
-        : 0
-        ;
+
+
+
+nn::Activation activ_id_to_enum(int _id) {
+    switch (_id) {
+    case 1:
+        return nn::Activation::RELU;
+    case 2:
+        return nn::Activation::LEAKY_RELU;
+    default:
+        return nn::Activation::IDENTITY;
+    }
 }
 
-fpoint d_ReLU(fpoint inp) {
-    return inp > 0
-        ? 1
-        : 0
-        ;
-}
-
-#define LEAKY_RELU_GRAD .01
-
-fpoint ReLU_leaky(fpoint inp) {
-    return inp > 0
-        ? inp
-        : LEAKY_RELU_GRAD * inp
-        ;
-}
-
-fpoint d_ReLU_leaky(fpoint inp) {
-    return inp > 0
-        ? 1
-        : LEAKY_RELU_GRAD
-        ;
-}
-
-using std::thread;
-
-template<typename T>
-void printVector(vectorList<T>& l);
-void printShape(Matrixd const& m);
 
 
+// initialise network using parameters from python
+// returns pointer to constructed object (C style) to allow
+// python to access said object
+dll FCN* INIT_FCN(
+    int* archData, int dSize,
+    fpoint dropout = 0, int activId = 1,
+    fpoint initMu = 0, fpoint initSigma = .1,
+    bool biasInitially0 = true) {
 
-
-
-dll FCN* INIT_FCN(int* archData, int dSize,
-    fpoint dropout = 0, int activ = RELU,
-    fpoint init_mu = 0, fpoint init_sigma = .1,
-    bool bias_init_0 = true) {
 
     vectorList<int> layerSizes;
-    vectorList<int> activs;
+    vectorList<nn::Activation> activs;
     activs.resize(dSize);
     layerSizes.resize(dSize);
+    
     for (int i = 0; i < dSize; i++) {
         layerSizes[i] = archData[i];
-        activs[i] = activ;
+        activs[i] = activ_id_to_enum(activId);
     }
 
-    FCN* fcn_ptr = new FCN(
+    FCN* fcnPTR = new FCN(
         layerSizes, dropout, activs,
-        init_mu, init_sigma, bias_init_0);
+        biasInitially0);
 
-    if (fcn_ptr == nullptr) {
+    if (fcnPTR == nullptr) {
         print("cannot create new FCN");
         return nullptr;
     }
 
-    fcn_ptr->display();
-    fcn_ptr->self = fcn_ptr;
+    fcnPTR->display_architecture();
+    //fcnPTR->self = fcnPTR;
 
-    return fcn_ptr;
+    return fcnPTR;
 }
 
-
-//dll void CLEAR_MEMORY(FCN* fcn_ptr  ) {
-//    delete fcn_ptr;
-//}
-
-
-
-
-dll void FORWARD_UNBATCHED(FCN* fcn_ptr, fpoint* data, int dSize,
-    fpoint* out_data) {
-    Matrixd X;
-    X.resize(dSize, 1);
-    for (int i = 0; i < dSize; i++) {
-        X(i, 0) = data[i];
-    }
-
-
-    Matrixd out = fcn_ptr->forward(X);
-
-
-    for (int i = 0; i < out.size(); i++) {
-        out_data[i] = (fpoint)out(i, 0);
-    }
-
+dll void EXPORT_FCN(FCN* fcnPTR, fpoint* out) {
+    fcnPTR->serialize(out);
+}
+dll void IMPORT_FCN(FCN* fcnPTR, fpoint* in) {
+    fcnPTR->load_params(in);
 }
 
-//dll void GET_PARAMS(FCN* fcn_ptr, fpoint* out) {
-//
-//}
+// regular neural network evaluation without 
+// gradient tracking, writes to outDataPTR
+dll void FORWARD_BATCHED(
+    FCN* fcnPTR, fpoint* data, 
+    int xSize, int ySize,
+    fpoint* outDataPTR) {
 
 
-dll void EXPORT_FCN(FCN* fcn_ptr, fpoint* out) {
-    fcn_ptr->serialize(out);
-}
+    // fast memory copy
+    //Matrix X = Eigen::Map<Matrix>(data, xSize, ySize);
 
-dll void IMPORT_FCN(FCN* fcn_ptr, fpoint* in) {
-    fcn_ptr->load_params(in);
-}
-
-
-dll void FORWARD_BATCHED(FCN* fcn_ptr, fpoint* data, int xSize, int ySize,
-    fpoint* out_data) {
-
-    Matrixd X;
+    // manual elemwise copy
+    Matrix X;
     X.resize(xSize, ySize);
-
     int i = 0;
     for (int y = 0; y < ySize; y++) {
-        for (int x = 0; x < xSize; x++) {
+    for (int x = 0; x < xSize; x++) {
+        X(x, y) = data[i]; i++; }}
 
-            X(x, y) = data[i];
-            i++;
-        }
-    }
+    Matrix out = fcnPTR->forward(X);
 
-
-
-    Matrixd out = fcn_ptr->forward(X);
-
-    //return;
-
+    //int i = 0;
     i = 0;
     for (int y = 0; y < out.cols(); y++) {
         for (int x = 0; x < out.rows(); x++) {
-
-            out_data[i] = out(x, y);
+            outDataPTR[i] = out(x, y);
             i++;
         }
     }
 
 
 }
+//Matrix X = Eigen::Map<Matrix>(&data[0], data.size(), 1);
 
 
 
-dll void REGISTER_DATASET(FCN* fcn_ptr,
-    fpoint* Xs, int x_datapoint_spacing, int xn,
-    fpoint* Ys, int yn, int classN, int bsize,
+
+dll void REGISTER_DATASET(FCN* fcnPTR,
+    fpoint* Xs, int xSpacing, int xN,
+    fpoint* Ys, int yN, int classN, int bsize,
     bool isTrain) {
 
-    //print("IS TRAIN"); print(isTrain);
+    nn::DataSet<Matrix>& dataset = isTrain ?
+        fcnPTR->trainData : fcnPTR->testData;
 
-    vectorList<fpoint> data;
-    vectorList<Matrixd> batchData;
+    int offset = 0;
 
-    for (int xi = 0; xi < xn; xi++) {
+    for (int i = 0; i < yN; i += bsize) {
 
-        data.push_back(Xs[xi]);
+        // handle the last batch being smaller than bsize
+        int chunkSize = std::min(bsize, yN - i);
 
-        if ((xi + 1) % x_datapoint_spacing == 0) {
+        Matrix X = Eigen::Map<Matrix>(
+            Xs + offset,
+            xSpacing, chunkSize);
 
-            // copy data to matrix
-            Matrixd X;
-            X.resize(x_datapoint_spacing, 1);
-            for (int i = 0; i < data.size(); i++) {
-                X(i, 0) = data[i];
-            }
 
-            // record and reset container
-            batchData.push_back(X);
-            data.clear();
+        // one hot encode
+        Matrix Y = Matrix::Zero(classN, chunkSize);
+        for (int _i = 0; _i < chunkSize; _i++) {
+            int label = (int)Ys[i + _i];
+            Y(label, _i) = 1.f;
         }
 
-        if (batchData.size() >= bsize or xi == xn - 1) {
-            Matrixd Xs;
-            int bsize_ = batchData.size();
-            Xs.resize(x_datapoint_spacing, bsize_);
-            for (int i = 0; i < bsize_; i++) {
-                Xs.col(i) = batchData.at(i);
-            }
 
-            DataSet<Matrixd>& dataset = isTrain ?
-                fcn_ptr->trainData : fcn_ptr->testData;
 
-            dataset.Xs.push_back(Xs);
-            batchData.clear();
-
-        }
-
+        dataset.Ys.push_back(Y);
+        dataset.Xs.push_back(X);
+        offset += chunkSize * xSpacing;
 
     }
 
-    data.clear();
-    for (int yi = 0; yi < yn; yi++) {
-        data.push_back(Ys[yi]);
-        if (data.size() >= bsize or yi == yn - 1) {
-            int bsize_ = data.size();
-
-            Matrixd Ys;
-
-            // one hot encode
-            Ys.resize(classN, bsize_);
-            Ys.fill(0);
-            int i = 0;
-
-
-            for (int batch = 0; batch < bsize_; batch++) {
-                fpoint y = data[batch];
-                Ys.col(batch).row(y).fill(1);
-                //Ys(y, batch) = 1;
-            }
-
-
-
-            DataSet<Matrixd>& dataset = isTrain ?
-                fcn_ptr->trainData : fcn_ptr->testData;
-            dataset.Ys.push_back(Ys);
-
-            data.clear();
-        }
-    }
-
-
-    fcn_ptr->datapointLength = x_datapoint_spacing;
-
-    //printShape(fcn_ptr->trainData.Xs[0]); // exit(0);
-    //printShape()
-
+    fcnPTR->datapointLength = xSpacing;
 
 }
 
 
-dll void PRINT_DATASET(FCN* fcn_ptr, bool print_actual_data = false) {
-    fcn_ptr->display_dataset(print_actual_data);
+// allows python end to make check if batch sizes 
+// and train test splits are correct
+dll void PRINT_DATASET(FCN* fcnPTR, bool print_actual_data = false) {
+    fcnPTR->display_dataset(print_actual_data);
 }
 
 
-dll void TRAIN(FCN* fcn_ptr, int epochs, fpoint lr, fpoint momentum,
-    fpoint weight_decay,
+dll void TRAIN(
+    FCN* fcnPTR, int epochs, 
+    fpoint lr, fpoint momentum,
+    fpoint weightDecay,
     fpoint* data, int dataN) {
 
-    fcn_ptr->train(epochs, lr, momentum, weight_decay,
-        data, dataN, 8);
+    fcnPTR->train(epochs, lr, momentum, weightDecay,
+        data, dataN, nn::THREADS_TO_USE, true);
 }
 
 
-dll fpoint TEST_ACCURACY(FCN* fcn_ptr) {
-    auto results = fcn_ptr->test_against_unseen(-1);
+dll fpoint TEST_ACCURACY(FCN* fcnPTR) {
+    auto results = fcnPTR->test_against_unseen(-1);
     return results[0];
 }
 
 
-dll void CLEANUP(FCN* fcn_ptr) {
-    delete fcn_ptr;
+dll void CLEANUP(FCN* fcnPTR) {
+    delete fcnPTR;
 }
 
 
-dll void TEST_(FCN* fcn_ptr) {
+// python side sanity checks, not needed 
+//void printShape(Matrix const& m);
+//dll void TEST_(FCN* fcnPTR) {
+//
+//    auto x = fcnPTR->trainData.Xs[0];
+//    auto y = fcnPTR->trainData.Ys[0];
+//
+//    //exit(0);
+//
+//    print(x); //print(y);
+//
+//    vectorList<vectorList<Matrix>> out = fcnPTR->backward(x, y);
+//
+//    //exit(0);
+//
+//    //print("weights");
+//    //auto& w = out[0];
+//    //for (auto e : w) {
+//    //    printShape(e);
+//    //}
+//    print("bias");
+//    for (auto e : out[1]) {
+//        printShape(e);
+//    }
+//
+//    //print("weights");
+//    //auto& w1 = fcnPTR->weights;
+//    //for (auto e : w1) {
+//    //    printShape(e);
+//    //}
+//    print("bias");
+//    for (auto e : fcnPTR->bias) {
+//        printShape(e);
+//    }
+//
+//
+//    print("weights");
+//    for (auto e : fcnPTR->weights) {
+//        printShape(e);
+//    }
+//    for (auto e : out[0]) {
+//        printShape(e);
+//    }
+//
+//
+//    exit(0);
+//
+//
+//}
+//dll int works_(int x) {
+//    dll_sanity_check(x);
+//    return x;
+//}
 
-    auto x = fcn_ptr->trainData.Xs[0];
-    auto y = fcn_ptr->trainData.Ys[0];
 
-    //exit(0);
-
-    print(x); //print(y);
-
-    vectorList<vectorList<Matrixd>> out = fcn_ptr->backward(x, y);
-
-    //exit(0);
-
-    //print("weights");
-    //auto& w = out[0];
-    //for (auto e : w) {
-    //    printShape(e);
-    //}
-    print("bias");
-    for (auto e : out[1]) {
-        printShape(e);
-    }
-
-    //print("weights");
-    //auto& w1 = fcn_ptr->weights;
-    //for (auto e : w1) {
-    //    printShape(e);
-    //}
-    print("bias");
-    for (auto e : fcn_ptr->bias) {
-        printShape(e);
-    }
-
-
-    print("weights");
-    for (auto e : fcn_ptr->weights) {
-        printShape(e);
-    }
-    for (auto e : out[0]) {
-        printShape(e);
-    }
-
-
-    exit(0);
-
-
-}
-
-
-
-dll int works_(int x) {
-    dll_sanity_check(x);
-    return x;
-}
 
 
 

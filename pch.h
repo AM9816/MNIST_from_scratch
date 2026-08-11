@@ -7,6 +7,11 @@
 #ifndef PCH_H
 #define PCH_H
 
+
+// fix problem with result_of not working 
+#define _HAS_DEPRECATED_RESULT_OF 1
+#define _SILENCE_CXX17_RESULT_OF_DEPRECATION_WARNING
+
 // add headers that you want to pre-compile here
 #include "framework.h"
 

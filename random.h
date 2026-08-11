@@ -1,40 +1,33 @@
 #pragma once
 #include <random>
 
-
+template<typename T>
 class RandomGen {
 private:
-    std::mt19937 mt;
-    std::uniform_real_distribution<double> range;
-	std::normal_distribution<double> normal;
+    std::uniform_real_distribution<T> floatDist;
+	std::normal_distribution<T> normDist;
+    //std::uniform_int_distribution<int> intDist;
     bool normalUsed = false;
 public:
+    std::mt19937 engine;
     //RandomGen() { };
     RandomGen(unsigned int seed = 0) {
-
-        if (seed == 0) {
-            std::random_device rand;
-            mt = std::mt19937(rand());
-        }
-        else {
-            mt = std::mt19937(seed);
-        }
-
-        range = std::uniform_real_distribution<double>(0, 1);
+        engine = std::mt19937(seed);
+        floatDist = std::uniform_real_distribution<T>(0, 1);
     }
-    double get() {
-        return range(mt);
+    T get() {
+        return floatDist(engine);
     }
-	void normalSet(double mean, double dev) {
-		normal = std::normal_distribution<double>(mean, dev);
+	void normalSet(T mean, T dev) {
+		normDist = std::normal_distribution<T>(mean, dev);
 		normalUsed = true;
 	}
-    double normalGet() {
+    T normalGet() {
         if (not normalUsed)
             this->normalSet(0, 1);
-        return normal(mt);
+        return normDist(engine);
     }
     int randint(int start, int end) {
-        return start + (end - start + 1) * get();
+        return std::uniform_int_distribution<int>(start, end)(engine);
     }
 };
