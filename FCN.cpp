@@ -239,9 +239,13 @@ Matrix FCN::forward(Matrix& Xs) {
 			bool isLastIter = i == this->arch.size() - 1;
 
 			auto const& W = this->weights[i];
-			Matrix B = this->bias[i].replicate(1, bsize); 
 
-			x = W * x + B;
+			// slow, allocates per iteration
+			//Matrix B = this->bias[i].replicate(1, bsize); 
+			//x = W * x + B;
+
+			// equivalent, but faster
+			x = (W * x).colwise() + this->bias[i].col(0);
 
 			// last activation is softmax, 
 			if (not isLastIter) {
@@ -319,6 +323,12 @@ FCN::backward(Matrix& Xs, Matrix& Ys,
 	// derivatives of loss w.r.t. weights and biases
 	vectorList<Matrix> DlDw;
 	vectorList<Matrix> DlDb;
+
+	// pre allocate to avoid allocation per call
+	auto n = this->arch.size();
+	Zs.reserve(n); As.reserve(n);
+	dropoutMasks.reserve(n);
+	DlDb.reserve(n); DlDb.reserve(n);
 
 
 	Matrix X = Xs; // current layer value
@@ -466,9 +476,9 @@ fpoint get_accuracy(Matrix& A, Matrix& B) {
 vectorList<fpoint> FCN::test_against_unseen(int N = -1) {
 
 
-	fpoint acc = 0, sumLoss = 0;
+	fpoint correct = 0, sumLoss = 0;
 	int datapointsTested = 0;
-	int batchesTested = 0;
+	
 	//auto& dataset = this->trainData;
 	auto& dataset = this->testData;
 
@@ -478,51 +488,121 @@ vectorList<fpoint> FCN::test_against_unseen(int N = -1) {
 		Matrix& Y = dataset.Ys[i];
 		Matrix out = this->forward(X);
 
-		acc += get_accuracy(out, Y);
-		batchesTested++;
-		datapointsTested += X.cols();
+		
+		const fpoint bsize = X.cols();
+
+		// scale by amount of datapoints in batch to avoid
+		// higher weight for smaller batches towards the end
+		correct += get_accuracy(out, Y) * bsize;
+		sumLoss += loss_ce(out, Y) * bsize;
+		
+		datapointsTested += (int)bsize;
 		
 		//sumLoss += loss_mse(out, Y);
-		sumLoss += loss_ce(out, Y);
+		
 
-		if (N != -1 and datapointsTested > N) break;
+		if (N != -1 and datapointsTested >= N) break;
 	}
 
-	const fpoint n = batchesTested;
-	return { acc / n,  sumLoss / n };
+	const fpoint n = datapointsTested;
+	
+	// return impossible value if dataset does not exist
+	if (n == 0.f) return { -1.f, -1.f };
+	return { correct / n,  sumLoss / n };
 }
 
 // basic shuffle
 // TODO replace with more efficient Fisher–Yates shuffle
+//void FCN::shuffle_dataset(int n = -1) {
+//
+//	auto& dataset = this->trainData;
+//
+//	int N = dataset.Xs.size();
+//
+//	// half dataset size by default
+//	if (n == -1) {
+//		n = N;
+//	}
+//	if (n >= N) n = N;
+//
+//	// todo make DataSet use better data struct for swaps
+//	for (int i = 0; i < n; i++) {
+//
+//		int i_ = (rgen.get() * N);
+//		int j_ = (rgen.get() * N);
+//
+//		Matrix X = dataset.Xs[i_];
+//		Matrix Y = dataset.Ys[i_];
+//	
+//		dataset.Xs[i_] = dataset.Xs[j_];
+//		dataset.Ys[i_] = dataset.Ys[j_];
+//
+//		dataset.Xs[j_] = X;
+//		dataset.Ys[j_] = Y;
+//
+//	
+//	}
+//
+//}
+
+
+// full, efficient per batch shuffle
+// Fisher - Yates shuffle
+// https://www.geeksforgeeks.org/dsa/shuffle-a-given-array-using-fisher-yates-shuffle-algorithm/
 void FCN::shuffle_dataset(int n = -1) {
 
 	auto& dataset = this->trainData;
-
 	int N = dataset.Xs.size();
 
-	// half dataset size by default
-	if (n == -1) {
-		n = N;
+	// store indexes per datapoint
+	vectorList<vectorList<int>> indexes;
+	for (int batch = 0; batch < N; batch++) {
+		for (int i = 0; i < dataset.Xs[batch].cols(); i++) {
+			indexes.push_back({
+				batch, i	
+			}); 
+	}}
+
+	int dps = indexes.size();
+	int swaps = (n == -1 or n > dps - 1) ? dps - 1 : n;
+
+	Vectorxd xTmp, yTmp;
+
+	for (int
+		i = dps - 1,
+		done = 0;
+
+		i > 0 and done < swaps;
+
+		i--, done++) {
+
+		const int j = rgen.randint(0, i);
+
+		if (i != j) {
+
+			auto const& X1_i = indexes[i];
+			auto const& X2_i = indexes[j];
+
+			
+			xTmp = dataset.Xs[X1_i[0]].col(X1_i[1]);
+			dataset.Xs[X1_i[0]].col(X1_i[1]) =
+				dataset.Xs[X2_i[0]].col(X2_i[1]);
+			dataset.Xs[X2_i[0]].col(X2_i[1]) = xTmp;
+
+			yTmp = dataset.Ys[X1_i[0]].col(X1_i[1]);
+			dataset.Ys[X1_i[0]].col(X1_i[1]) =
+				dataset.Ys[X2_i[0]].col(X2_i[1]);
+			dataset.Ys[X2_i[0]].col(X2_i[1]) = yTmp;
+
+
+
+
+
+		}
+
 	}
-	if (n >= N) n = N;
-
-	// todo make DataSet use better data struct for swaps
-	for (int i = 0; i < n; i++) {
-
-		int i_ = (rgen.get() * N);
-		int j_ = (rgen.get() * N);
-
-		Matrix X = dataset.Xs[i_];
-		Matrix Y = dataset.Ys[i_];
 	
-		dataset.Xs[i_] = dataset.Xs[j_];
-		dataset.Ys[i_] = dataset.Ys[j_];
 
-		dataset.Xs[j_] = X;
-		dataset.Ys[j_] = Y;
-
-	
-	}
 
 }
 

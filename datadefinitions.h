@@ -39,7 +39,7 @@ namespace nn {
     };
 
 
-    constexpr int THREADS_TO_USE = 16;
+    constexpr int THREADS_TO_USE = 4;
     constexpr fpoint LEAKY_RELU_GRAD = .01;
     constexpr fpoint EPSILON = 1e-8;
     constexpr auto rSeed = 2;
