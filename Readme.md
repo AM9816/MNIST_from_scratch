@@ -1,6 +1,6 @@
 # MNIST_no_ml_libs
 
-A fully connected neural network written from scratch in C++, with a python frontend for easy and automatic data loading, and plug and play functionality. No PyTorch, TensorFlow or any other machine learning library, only Eigen for linear algebra. Compiles into a Windows DLL to be loaded with Python ctypes (see python example file).
+A fully connected neural network written from scratch in C++, MNIST accuracy within 1% of an equivalent architecture in PyTorch after 3 epochs of training (verifiable using `pytorch_comparison.py`). Python frontend for easy and automatic data loading, and plug and play functionality. No PyTorch, TensorFlow or any other machine learning library, only Eigen for linear algebra. Compiles into a Windows DLL to be loaded with Python ctypes (see python example file).
 
 ## Current Features
 
